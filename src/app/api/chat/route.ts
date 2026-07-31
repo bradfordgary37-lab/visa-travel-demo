@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import axios from "axios";
+import { createGoogleGenerativeAI } from "@ai-sdk/google";
+import { generateText } from "ai";
 
-// Bypassing local SSL network checks
+// Bypassing local SSL network checks for proxy compatibility
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
 
 const supabase = createClient(
@@ -11,7 +12,6 @@ const supabase = createClient(
 );
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "";
-const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
 
 const AMINA_SYSTEM_PROMPT = `You are Amina, a virtual travel assistant for Visa Travel and Tours SPRL (founded 2016, IATA accredited travel agency in Bujumbura, Burundi).
 You are polite, professional, and speak in the active locale's language (either French or English).
@@ -75,39 +75,6 @@ function checkEscalation(message: string, turnCount: number): { trigger: boolean
   return { trigger: false, reason: null };
 }
 
-async function callGemini(systemPrompt: string, history: any[], userMessage: string) {
-  if (!GEMINI_API_KEY) {
-    throw new Error("Missing GEMINI_API_KEY");
-  }
-
-  const formattedHistory = history.map((h: any) => ({
-    role: h.role === "user" ? "user" : "model",
-    parts: [{ text: h.content }]
-  }));
-
-  formattedHistory.push({ role: "user", parts: [{ text: userMessage }] });
-
-  try {
-    const response = await axios.post(GEMINI_API_URL, {
-      contents: formattedHistory,
-      systemInstruction: {
-        parts: [{ text: systemPrompt }]
-      },
-      generationConfig: {
-        temperature: 0.2
-      }
-    }, {
-      headers: { "Content-Type": "application/json" },
-      timeout: 10000
-    });
-
-    return response.data?.candidates?.[0]?.content?.parts?.[0]?.text || "Amina encountered a parsing error.";
-  } catch (err: any) {
-    console.error("Gemini API call failed:", err.message);
-    throw err;
-  }
-}
-
 // Standard offline mock response generator for regional geo-blocking compatibility
 function generateLocalMockResponse(message: string, locale: string): string {
   const text = message.toLowerCase();
@@ -133,17 +100,19 @@ function generateLocalMockResponse(message: string, locale: string): string {
 
   return isFR
     ? "Je prends note de votre demande concernant votre projet de voyage. Nos agents basés à Bujumbura et Kampala étudient volontiers vos itinéraires. Pour une assistance immédiate ou une réservation ferme, vous pouvez soumettre le formulaire de contact ou nous appeler au +257 22219656."
-    : "I have recorded your travel question. Our sales agents in Bujumbura and Kampala are ready to assist you. For direct help, you can call us at +257 22219656 or submit a travel inquiry form.";
+    : "I have noted your request regarding your travel plans. Our agents based in Bujumbura and Kampala would be happy to review your itineraries. For immediate assistance or to make a confirmed booking, you can submit the contact form or call us at +257 22219656.";
 }
 
 export async function POST(req: Request) {
   const startTime = Date.now();
+  let sessionId = "unknown";
 
   try {
-    const { message, history, locale, sessionId, isAfterHours } = await req.json();
+    const { message, history, locale, sessionId: reqSessionId, isAfterHours } = await req.json();
+    sessionId = reqSessionId || "chat-session-" + Math.floor(Math.random() * 100000);
 
-    if (!message || !sessionId) {
-      return NextResponse.json({ error: "Missing message or sessionId" }, { status: 400 });
+    if (!message) {
+      return NextResponse.json({ error: "Missing message" }, { status: 400 });
     }
 
     // A. Check for Escalation Gates
@@ -153,18 +122,22 @@ export async function POST(req: Request) {
     if (escalationCheck.trigger) {
       console.log(`[Escalation Triggered] Reason: ${escalationCheck.reason}`);
 
-      // 1. Generate summary using Gemini
+      // 1. Generate summary using Vercel AI SDK Google provider
       let summary = `Inquiry regarding ${message.substring(0, 40)}...`;
       if (GEMINI_API_KEY) {
         try {
-          const sumResponse = await callGemini(
-            "Write a brief one-sentence summary of this user inquiry for a travel agent. Keep it concise, e.g., 'Flight inquiry to Nairobi for tomorrow'. Do not output anything else.",
-            [],
-            `User query: "${message}"`
-          );
-          summary = sumResponse.trim();
+          const google = createGoogleGenerativeAI({ apiKey: GEMINI_API_KEY });
+          const { text } = await generateText({
+            model: google("gemini-1.5-flash"),
+            messages: [{
+              role: "user",
+              content: `Write a brief one-sentence summary of this user inquiry for a travel agent. Keep it concise, e.g., 'Flight inquiry to Nairobi for tomorrow'. Do not output anything else. Inquiry: "${message}"`
+            }],
+            temperature: 0.2
+          });
+          summary = text.trim();
         } catch (e) {
-          console.warn("Failed to generate summary with AI, using fallback.");
+          console.warn("Failed to generate summary with AI SDK, using fallback.");
         }
       }
 
@@ -181,10 +154,10 @@ export async function POST(req: Request) {
             locale,
             channel: "chat",
             name: "Passenger",
-            email: "pending@visa.com", // Will be updated if user leaves email
+            email: "pending@visa.com",
             phone: null,
-            inquiry_type: "ticketing", // Default
-            route_or_dest: "Nairobi", // Default
+            inquiry_type: "ticketing",
+            route_or_dest: "Nairobi",
             travel_date: null,
             passengers: 1,
             summary: summary,
@@ -201,8 +174,7 @@ export async function POST(req: Request) {
 
       if (inqError) throw inqError;
 
-      // 3. Write final conversation turns to conversations
-      // First save the user message
+      // 3. Log conversation turns
       await supabase.from("conversations").insert([
         {
           inquiry_id: inquiry.id,
@@ -213,7 +185,6 @@ export async function POST(req: Request) {
         }
       ]);
 
-      // Then save the assistant escalation notification
       const escalationResponseText = locale === "fr" 
         ? `Votre demande concernant "${summary}" a été transmise à notre équipe. Un dossier a été créé avec la référence : **${refNum}**. Nos agents vont prendre le relais.` 
         : `Your inquiry regarding "${summary}" has been routed to our agents. A tracking file has been created with reference: **${refNum}**. Our team will assist you shortly.`;
@@ -237,19 +208,37 @@ export async function POST(req: Request) {
       });
     }
 
-    // B. Standard conversation flow (No Escalation)
-    console.log("Processing standard chat turn...");
+    // B. Standard conversation flow (No Escalation) using Vercel AI SDK
+    console.log("Processing standard chat turn using Vercel AI SDK...");
     let assistantReply = "";
     
-    try {
-      assistantReply = await callGemini(AMINA_SYSTEM_PROMPT, history || [], message);
-    } catch (apiError: any) {
-      console.warn("Gemini call failed in standard turn. Generating local mock response:", apiError.message);
+    if (GEMINI_API_KEY) {
+      try {
+        const google = createGoogleGenerativeAI({ apiKey: GEMINI_API_KEY });
+        const formattedHistory = (history || []).map((m: any) => ({
+          role: m.role === "user" ? "user" : "assistant",
+          content: m.content
+        }));
+
+        const { text } = await generateText({
+          model: google("gemini-1.5-flash"),
+          system: AMINA_SYSTEM_PROMPT,
+          messages: [
+            ...formattedHistory,
+            { role: "user", content: message }
+          ],
+          temperature: 0.2
+        });
+        assistantReply = text;
+      } catch (apiError: any) {
+        console.warn("Vercel AI SDK call failed in standard turn. Falling back to mock:", apiError.message);
+        assistantReply = generateLocalMockResponse(message, locale);
+      }
+    } else {
       assistantReply = generateLocalMockResponse(message, locale);
     }
 
-    // Save dialogue logs (even without inquiry link, using raw_session_id logic)
-    // First user turn
+    // Save dialogue logs
     await supabase.from("conversations").insert([
       {
         inquiry_id: null,
@@ -257,11 +246,7 @@ export async function POST(req: Request) {
         role: "user",
         content: message,
         locale
-      }
-    ]);
-
-    // Next assistant turn
-    await supabase.from("conversations").insert([
+      },
       {
         inquiry_id: null,
         created_at: new Date().toISOString(),

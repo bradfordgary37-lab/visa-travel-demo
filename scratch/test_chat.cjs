@@ -3,9 +3,9 @@ const axios = require("axios");
 async function test() {
   try {
     const response = await axios.post("http://localhost:3000/api/chat", {
-      message: "quelles sont les exigences de visa pour la Belgique?",
+      message: "how long does it take to nairobi?",
       sessionId: "test-session-123",
-      locale: "fr",
+      locale: "en",
       isAfterHours: false
     });
     

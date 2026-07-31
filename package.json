@@ -10,7 +10,9 @@
     "seed": "node src/scripts/seed.cjs"
   },
   "dependencies": {
+    "@ai-sdk/google": "^4.0.29",
     "@supabase/supabase-js": "^2.111.0",
+    "ai": "^7.0.44",
     "axios": "^1.19.0",
     "lucide-react": "^1.28.0",
     "next": "16.2.12",
