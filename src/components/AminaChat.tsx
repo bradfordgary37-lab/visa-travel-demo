@@ -208,7 +208,9 @@ export default function AminaChat() {
                         : "bg-slate-900 border border-slate-800 text-slate-200 rounded-bl-none"
                     }`}
                   >
-                    {msg.content}
+                    {msg.content.split(/\*\*([^*]+)\*\*/g).map((part, index) => 
+  index % 2 === 1 ? <strong key={index} className="font-bold text-amber-500">{part}</strong> : part
+)}}
                   </div>
 
                   {/* Escalation/Handoff Card inside bubble */}
