@@ -5,71 +5,53 @@ import { generateText } from "ai";
 
 const db = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL || "", process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "");
 const key = process.env.GEMINI_API_KEY || "";
-const AMINA_SYSTEM_PROMPT = `You are Amina, assistant for Visa Travel and Tours (Bd du Japon N42 Bujumbura +25722219656; Raja Chambers Kampala +256731419028. Mon-Fri 8-18 CAT).
+const PROMPT = `You are Amina, assistant for Visa Travel and Tours (Bujumbura +25722219656; Kampala +256731419028. Mon-Fri 8-18 CAT).
 Rules:
-- Tier A: Office contacts, hours, GDS, services (ticketing, bespoke tours, hotels).
-- Tier B: Visas, flight schedules/fares, baggage, change rules (Explain process, hand off, NO figures).
-- Chat: Brief (2-4 sentences). FR/EN. No pricing.
+- Tier A (Answer directly): Contacts, hours, GDS, services (ticketing, tours, hotels).
+- Tier B (No figures, explain process, hand off): Visas, fares, schedules, bags, changes.
+- Tone: Brief (2-3 sentences). Match language (FR/EN). No prices.
 - Escalation: Pricing, booking, travel <72h, disruptions, human.`;
 
-function checkEsc(msg: string, count: number): boolean {
-  const text = msg.toLowerCase();
-  const kw = ["tarif", "prix", "combien", "acheter", "reserver", "vol", "fare", "cost", "price", "booking", "quote", "demain", "aujourd'hui", "ce soir", "48h", "72h", "tomorrow", "today", "tonight", "agent", "conseiller", "whatsapp", "phone", "human", "talk", "annuler", "retard", "perdu", "bagage", "bloqu", "refus", "cancel", "delay", "lost", "missed", "emergency"];
-  return kw.some(k => text.includes(k)) || count >= 4;
-}
+const checkEsc = (m: string, c: number) => {
+  const t = m.toLowerCase(), kw = ["tarif", "prix", "combien", "acheter", "reserver", "vol", "fare", "cost", "price", "booking", "quote", "demain", "ce soir", "48h", "72h", "tomorrow", "today", "agent", "whatsapp", "phone", "human", "talk", "annuler", "retard", "perdu", "bagage", "bloqu", "refus", "cancel", "delay", "lost", "missed", "emergency"];
+  return kw.some(k => t.includes(k)) || c >= 4;
+};
 
-function mockResp(msg: string, locale: string): string {
-  const text = msg.toLowerCase();
-  const isFR = locale === "fr";
-  if (text.includes("bag") || text.includes("valise") || text.includes("poids")) {
-    return isFR ? "La franchise bagages dépend du vol. Un agent vérifiera." : "Baggage allowance depends on flight. An agent will confirm.";
-  }
-  if (text.includes("visa") || text.includes("passeport")) {
-    return isFR ? "Les visas dépendent de votre nationalité. Nos agents vérifient." : "Visas depend on nationality. Our agents verify requirements.";
-  }
-  return isFR ? "Demande enregistrée. Nos agents basés à Bujumbura/Kampala étudient votre itinéraire. Contact : +257 22219656." : "Request noted. Our agents based in Bujumbura/Kampala will review your plans. Contact: +257 22219656.";
-}
+const mock = (m: string, f: boolean) => {
+  const t = m.toLowerCase();
+  if (t.includes("bag") || t.includes("valise")) return f ? "La franchise bagages dépend du vol. Un agent vérifiera." : "Baggage allowance depends on flight. An agent will confirm.";
+  if (t.includes("visa") || t.includes("pass")) return f ? "Les visas dépendent de la nationalité." : "Visas depend on nationality.";
+  return f ? "Demande enregistrée. Contact : +257 22219656." : "Request noted. Contact: +257 22219656.";
+};
 
 export async function POST(req: Request) {
   try {
-    const { message, history, locale, sessionId, isAfterHours } = await req.json();
-    const count = history ? history.length : 0;
-    if (checkEsc(message, count)) {
+    const { message: msg, history: hist, locale, sessionId: sid, isAfterHours: ah } = await req.json();
+    const isFR = locale === "fr", count = hist ? hist.length : 0;
+    if (checkEsc(msg, count)) {
       const ref = `VTT-${Math.floor(1000 + Math.random() * 9000)}`;
-      const summary = message.substring(0, 40);
       const { data: inq, error } = await db.from("inquiries").insert([{
-        reference: ref, locale, channel: "chat", name: "Passenger", email: "pending@visa.com", inquiry_type: "ticketing", summary, status: "new", after_hours: isAfterHours || false, escalated: true, assigned_office: locale === "en" ? "kampala" : "bujumbura", raw_session_id: sessionId || "session"
+        reference: ref, locale, channel: "chat", name: "Passenger", email: "pending@visa.com", inquiry_type: "ticketing", summary: msg.substring(0, 40), status: "new", after_hours: ah || false, escalated: true, assigned_office: isFR ? "bujumbura" : "kampala", raw_session_id: sid || "session"
       }]).select().single();
       if (error) throw error;
-      await db.from("conversations").insert([{ inquiry_id: inq.id, role: "user", content: message, locale }]);
-      const reply = locale === "fr" ? `Votre demande a été transmise. Réf: **${ref}**.` : `Your inquiry has been routed. Ref: **${ref}**.`;
+      await db.from("conversations").insert([{ inquiry_id: inq.id, role: "user", content: msg, locale }]);
+      const reply = isFR ? `Votre demande a été transmise. Réf: **${ref}**.` : `Your inquiry has been routed. Ref: **${ref}**.`;
       await db.from("conversations").insert([{ inquiry_id: inq.id, role: "assistant", content: reply, locale }]);
-      return NextResponse.json({ escalated: true, reference: ref, summary, message: reply, inquiryId: inq.id });
+      return NextResponse.json({ escalated: true, reference: ref, summary: msg.substring(0, 40), message: reply, inquiryId: inq.id });
     }
-    let replyText = "";
+    let reply = "";
     if (key) {
       try {
         const google = createGoogleGenerativeAI({ apiKey: key });
-        const historyMsgs = (history || []).map((m: any) => ({ role: m.role === "user" ? "user" : "assistant", content: m.content }));
         const { text } = await generateText({
-          model: google("gemini-1.5-flash"),
-          system: AMINA_SYSTEM_PROMPT,
-          messages: [...historyMsgs, { role: "user", content: message }],
+          model: google("gemini-1.5-flash"), system: PROMPT,
+          messages: [...(hist || []).map((m: any) => ({ role: m.role === "user" ? "user" : "assistant", content: m.content })), { role: "user", content: msg }],
           temperature: 0.2
         });
-        replyText = text;
-      } catch (e) {
-        replyText = mockResp(message, locale);
-      }
-    } else {
-      replyText = mockResp(message, locale);
-    }
-    await db.from("conversations").insert([
-      { inquiry_id: null, role: "user", content: message, locale },
-      { inquiry_id: null, role: "assistant", content: replyText, locale }
-    ]);
-    return NextResponse.json({ escalated: false, message: replyText });
-  } catch (err: any) {
-    return NextResponse.json({ error: err.message }, { status: 500 });
-  }
+        reply = text;
+      } catch { reply = mock(msg, isFR); }
+    } else reply = mock(msg, isFR);
+    await db.from("conversations").insert([{ inquiry_id: null, role: "user", content: msg, locale }, { inquiry_id: null, role: "assistant", content: reply, locale }]);
+    return NextResponse.json({ escalated: false, message: reply });
+  } catch (err: any) { return NextResponse.json({ error: err.message }, { status: 500 }); }
 }
