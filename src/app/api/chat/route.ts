@@ -35,9 +35,10 @@ function generateLocalMockResponse(message: string, locale: string): string {
   if (text.includes("visa") || text.includes("passeport")) {
     return isFR ? "Les visas dépendent de votre nationalité. Nos agents vérifient." : "Visas depend on nationality. Our agents verify requirements.";
   }
-  return isFR 
-    ? "Demande enregistrée. Nos agents basés à Bujumbura/Kampala étudient votre itinéraire. Contact : +257 22219656." 
-    : "Request noted. Our agents based in Bujumbura/Kampala will review your plans. Contact: +257 22219656.";
+  if (text.includes("horaire") || text.includes("ouvert") || text.includes("heure") || text.includes("hour") || text.includes("open")) {
+    return isFR ? "Ouvert du lundi au vendredi, de 08h00 à 18h00 CAT." : "Open Monday to Friday, from 08:00 AM to 06:00 PM CAT.";
+  }
+  return isFR ? "Demande enregistrée. Nos agents basés à Bujumbura/Kampala étudient votre itinéraire. Contact : +257 22219656." : "Request noted. Our agents based in Bujumbura/Kampala will review your plans. Contact: +257 22219656.";
 }
 
 export async function POST(req: Request) {
@@ -76,9 +77,9 @@ export async function POST(req: Request) {
       if (inqError) throw inqError;
 
       await supabase.from("conversations").insert([{ inquiry_id: inquiry.id, created_at: new Date().toISOString(), role: "user", content: message, locale }]);
-      const responseText = locale === "fr" 
-        ? `Votre demande concernant "${summary}" a été transmise. Référence dossier : **${refNum}**.` 
-        : `Your inquiry regarding "${summary}" has been routed to our agents. File reference: **${refNum}**.`;
+      const responseFR = `Votre demande concernant "${summary}" a été transmise. Référence dossier : **${refNum}**.`;
+      const responseEN = `Your inquiry regarding "${summary}" has been routed to our agents. File reference: **${refNum}**.`;
+      const responseText = locale === "fr" ? responseFR : responseEN;
 
       await supabase.from("conversations").insert([{ inquiry_id: inquiry.id, created_at: new Date().toISOString(), role: "assistant", content: responseText, locale }]);
 
