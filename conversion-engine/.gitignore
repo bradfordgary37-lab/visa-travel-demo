@@ -1,0 +1,19 @@
+__pycache__/
+*.pyc
+
+# pipeline inputs (not included in the repo)
+retry_queue.csv
+never_analysed_queue.csv
+business_names.csv
+segment_matrix.csv
+
+# pipeline outputs
+html/
+fetch_log.csv
+dead_domains.csv
+signals.csv
+signals.jsonl
+classified.csv
+classified.jsonl
+validation_sample.csv
+validation_sample.jsonl
