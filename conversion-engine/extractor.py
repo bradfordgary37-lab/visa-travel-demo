@@ -181,10 +181,22 @@ def extract_form_signals(tree: HTMLParser) -> dict[str, Any]:
     }
 
 
+NON_VISIBLE_TAGS = ("script", "style", "noscript", "template")
+
+
+def strip_non_visible(tree: HTMLParser) -> None:
+    """Remove tags whose text content is markup/code, not visible page text."""
+    for tag in NON_VISIBLE_TAGS:
+        for node in tree.css(tag):
+            node.decompose()
+
+
 def extract_signals_from_pages(pages: list[str]) -> dict[str, Any]:
     """pages: list of raw HTML strings for a single lead (homepage [, page2])."""
     combined_html = "\n".join(pages)
     trees = [HTMLParser(p) for p in pages]
+    for tree in trees:
+        strip_non_visible(tree)
     primary_tree = trees[0]
 
     platform, platform_evidence = detect_platform(combined_html)
