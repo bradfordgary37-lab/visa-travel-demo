@@ -18,3 +18,5 @@ classified.csv
 classified.jsonl
 validation_sample.csv
 validation_sample.jsonl
+ok_signals.jsonl
+batch_*.jsonl
