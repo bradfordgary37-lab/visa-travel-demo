@@ -9,8 +9,9 @@ segment_matrix.csv
 
 # pipeline outputs
 html/
-fetch_log.csv
-dead_domains.csv
+fetch_log*.csv
+dead_domains*.csv
+retry_blocked*.csv
 signals.csv
 signals.jsonl
 classified.csv
