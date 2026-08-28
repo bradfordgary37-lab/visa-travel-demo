@@ -214,12 +214,21 @@ async def fetch_lead(client: httpx.AsyncClient, lead: Lead, html_dir: Path) -> F
     return result
 
 
-async def run(leads: list[Lead], html_dir: Path, fetch_log_path: Path, dead_domains_path: Path) -> None:
-    semaphore = asyncio.Semaphore(CONCURRENCY)
-    limits = httpx.Limits(max_connections=CONCURRENCY, max_keepalive_connections=CONCURRENCY)
+async def run(
+    leads: list[Lead],
+    html_dir: Path,
+    fetch_log_path: Path,
+    dead_domains_path: Path,
+    concurrency: int = CONCURRENCY,
+    stagger_seconds: float = 0.0,
+) -> None:
+    semaphore = asyncio.Semaphore(concurrency)
+    limits = httpx.Limits(max_connections=concurrency, max_keepalive_connections=concurrency)
     timeout = httpx.Timeout(TIMEOUT_SECONDS)
 
-    async def worker(client: httpx.AsyncClient, lead: Lead) -> FetchResult:
+    async def worker(client: httpx.AsyncClient, lead: Lead, delay: float) -> FetchResult:
+        if delay:
+            await asyncio.sleep(delay)
         async with semaphore:
             return await fetch_lead(client, lead, html_dir)
 
@@ -230,7 +239,9 @@ async def run(leads: list[Lead], html_dir: Path, fetch_log_path: Path, dead_doma
         max_redirects=MAX_REDIRECTS,
         http2=False,
     ) as client:
-        results = await asyncio.gather(*(worker(client, lead) for lead in leads))
+        results = await asyncio.gather(
+            *(worker(client, lead, i * stagger_seconds) for i, lead in enumerate(leads))
+        )
 
     fetch_log_path.parent.mkdir(parents=True, exist_ok=True)
     with fetch_log_path.open("w", newline="", encoding="utf-8") as f:
@@ -272,6 +283,10 @@ def main() -> None:
     parser.add_argument("--html-dir", type=Path, default=Path("html"))
     parser.add_argument("--fetch-log", type=Path, default=Path("fetch_log.csv"))
     parser.add_argument("--dead-domains", type=Path, default=Path("dead_domains.csv"))
+    parser.add_argument("--concurrency", type=int, default=CONCURRENCY)
+    parser.add_argument("--stagger-seconds", type=float, default=0.0,
+                         help="delay each successive lead's start by this many seconds, "
+                              "to avoid bursting many new hosts at once under a strict egress policy")
     args = parser.parse_args()
 
     leads = load_leads(args.retry_queue, args.never_analysed_queue)
@@ -280,7 +295,10 @@ def main() -> None:
             f"No leads loaded from {args.retry_queue} / {args.never_analysed_queue}. "
             "Place the input CSVs in the working directory or pass --retry-queue/--never-analysed-queue."
         )
-    asyncio.run(run(leads, args.html_dir, args.fetch_log, args.dead_domains))
+    asyncio.run(run(
+        leads, args.html_dir, args.fetch_log, args.dead_domains,
+        concurrency=args.concurrency, stagger_seconds=args.stagger_seconds,
+    ))
 
 
 if __name__ == "__main__":
