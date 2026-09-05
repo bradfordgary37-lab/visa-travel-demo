@@ -247,7 +247,7 @@ RESULTS = [
  "has_popup_script is false and has_esp_tag is none -- no recovery mechanism at all.",
  "has_chat_widget is none across an unusually wide luxury-brand catalog (Armani, Chanel, Creed, Tom Ford, Le Labo, YSL, and many more) -- a genuinely wide, overlapping-brand scenario.",
  "has_email_form is false, has_contact_form is false, has_esp_tag is none -- no capture mechanism.",3,None),
-("415","crescendo.org.in","Crescendo",None,"Follow-up Opportunity","Low",
+("415","crescendo.org.in","Crescendo","Follow-up Opportunity",None,"Low",
  "Indian inter-collegiate youth festival (student cultural/sports event).",
  40,15,20,55,50,
  "cta_count_above_fold is 0; 'Register Now' text is present but not counted as a button.",
