@@ -22,3 +22,4 @@ ok_signals.jsonl
 all_ok_signals.jsonl
 batch_*.jsonl
 chunk_*.jsonl
+conversion_engine_leads.xlsx
